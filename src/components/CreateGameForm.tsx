@@ -1,61 +1,96 @@
 "use client";
 
-import { useState } from "react";
-import { request, connect } from "@stacks/connect";
+import { useState, useEffect } from "react";
+import { useConnect } from "@stacks/connect-react";
 import { uintCV } from "@stacks/transactions";
-import { useStacks } from "@/components/Providers";
+import { userSession } from "@/lib/stacks";
 import { CONTRACT_ADDRESS, CONTRACT_NAME, FUNCTIONS } from "@/lib/contracts";
 
 export default function CreateGameForm() {
-  const { isConnected } = useStacks();
+  const { doContractCall, authenticate } = useConnect();
   const [min, setMin] = useState(1);
   const [max, setMax] = useState(100);
   const [fee, setFee] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+    
+    // Check initial state
+    if (userSession && userSession.isUserSignedIn()) {
+      setIsSignedIn(true);
+    }
+    
+    // Poll for sign-in state changes (in case authentication happens)
+    const interval = setInterval(() => {
+      if (userSession && userSession.isUserSignedIn()) {
+        if (!isSignedIn) {
+          console.log("User signed in detected!");
+          setIsSignedIn(true);
+        }
+      } else {
+        if (isSignedIn) {
+          console.log("User signed out detected!");
+          setIsSignedIn(false);
+        }
+      }
+    }, 1000); // Check every second
+    
+    return () => clearInterval(interval);
+  }, [isSignedIn]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // If not connected, trigger wallet connection
-    if (!isConnected) {
-        try {
-            await connect();
-            // After connection, the page will reload, so we don't continue here
-            return;
-        } catch (error) {
-            console.error("Wallet connection cancelled or failed", error);
-            return;
-        }
+    // If not signed in, trigger authentication
+    if (!isSignedIn) {
+      authenticate({
+        appDetails: {
+          name: 'DigiWin',
+          icon: typeof window !== 'undefined' ? window.location.origin + '/favicon.ico' : '/favicon.ico',
+        },
+        redirectTo: '/',
+        onFinish: () => {
+          setIsSignedIn(true);
+        },
+        userSession,
+      });
+      return;
     }
 
     setIsLoading(true);
 
     try {
-        const feeMicroStx = Math.floor(fee * 1000000);
-        
-        // Use standard request method for v8
-        const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
-            functionName: FUNCTIONS.CREATE_GAME,
-            functionArgs: [
-                uintCV(min),
-                uintCV(max),
-                uintCV(feeMicroStx)
-            ],
-            network: 'mainnet' // Optional, defaults to mainnet but good to be explicit
-        });
-
-        if (response.txid) {
-            console.log("Transaction ID:", response.txid);
-            alert(`Game creation transaction broadcasted! TxId: ${response.txid}`);
-        }
-        setIsLoading(false);
-
+      const feeMicroStx = Math.floor(fee * 1000000);
+      
+      doContractCall({
+        contractAddress: CONTRACT_ADDRESS,
+        contractName: CONTRACT_NAME,
+        functionName: FUNCTIONS.CREATE_GAME,
+        functionArgs: [
+          uintCV(min),
+          uintCV(max),
+          uintCV(feeMicroStx)
+        ],
+        onFinish: (data) => {
+          console.log("Transaction finished:", data);
+          alert(`Game creation transaction broadcasted! TxId: ${data.txId}`);
+          setIsLoading(false);
+        },
+        onCancel: () => {
+          console.log("Transaction canceled");
+          setIsLoading(false);
+        },
+      });
     } catch (error) {
-        console.error("Contract call failed", error);
-        setIsLoading(false);
+      console.error("Contract call failed", error);
+      setIsLoading(false);
     }
   };
+
+  if (!isMounted) return null;
 
   return (
     <div id="create" className="max-w-xl mx-auto relative glass rounded-3xl p-10 overflow-hidden">
@@ -133,7 +168,7 @@ export default function CreateGameForm() {
                 <span>Creating Game...</span>
               </>
             ) : (
-              <span>🚀 Launch Game</span>
+              <span>🚀 {isSignedIn ? 'Launch Game' : 'Connect & Launch'}</span>
             )}
           </button>
         </form>

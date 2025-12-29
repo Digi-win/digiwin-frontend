@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { request, connect } from "@stacks/connect";
+import { useState, useEffect } from "react";
+import { useConnect } from "@stacks/connect-react";
 import { uintCV } from "@stacks/transactions";
-import { useStacks } from "@/components/Providers";
+import { userSession } from "@/lib/stacks";
 import { CONTRACT_ADDRESS, CONTRACT_NAME, FUNCTIONS } from "@/lib/contracts";
 
 interface GuessFormProps {
@@ -13,57 +13,90 @@ interface GuessFormProps {
 }
 
 export default function GuessForm({ gameId, min, max }: GuessFormProps) {
-  const { isConnected } = useStacks();
+  const { doContractCall, authenticate } = useConnect();
   const [guess, setGuess] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+    
+    // Check initial state
+    if (userSession && userSession.isUserSignedIn()) {
+      setIsSignedIn(true);
+    }
+    
+    // Poll for sign-in state changes
+    const interval = setInterval(() => {
+      if (userSession && userSession.isUserSignedIn()) {
+        if (!isSignedIn) {
+          setIsSignedIn(true);
+        }
+      } else {
+        if (isSignedIn) {
+          setIsSignedIn(false);
+        }
+      }
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, [isSignedIn]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // If not connected, trigger wallet connection
-    if (!isConnected) {
-        try {
-            await connect();
-            // After connection, the page will reload, so we don't continue here
-            return;
-        } catch (error) {
-            console.error("Wallet connection cancelled or failed", error);
-            return;
-        }
+    // If not signed in, trigger authentication
+    if (!isSignedIn) {
+      authenticate({
+        appDetails: {
+          name: 'DigiWin',
+          icon: typeof window !== 'undefined' ? window.location.origin + '/favicon.ico' : '/favicon.ico',
+        },
+        redirectTo: '/',
+        onFinish: () => {
+          setIsSignedIn(true);
+        },
+        userSession,
+      });
+      return;
+    }
+
+    const guessNum = parseInt(guess);
+    if (isNaN(guessNum) || guessNum < min || guessNum > max) {
+      alert(`Please enter a valid number between ${min} and ${max}`);
+      return;
     }
 
     setIsLoading(true);
 
     try {
-        const guessNum = parseInt(guess);
-        if (isNaN(guessNum) || guessNum < min || guessNum > max) {
-            alert(`Please enter a valid number between ${min} and ${max}`);
-            setIsLoading(false);
-            return;
-        }
-
-        const response = await request('stx_callContract', {
-            contract: `${CONTRACT_ADDRESS}.${CONTRACT_NAME}`,
-            functionName: FUNCTIONS.GUESS,
-            functionArgs: [
-                uintCV(gameId),
-                uintCV(guessNum)
-            ],
-            network: 'mainnet'
-        });
-
-        if (response.txid) {
-            console.log("Transaction ID:", response.txid);
-            alert(`Guess transaction broadcasted! TxId: ${response.txid}`);
-            setGuess("");
-        }
-        setIsLoading(false);
-        
+      doContractCall({
+        contractAddress: CONTRACT_ADDRESS,
+        contractName: CONTRACT_NAME,
+        functionName: FUNCTIONS.GUESS,
+        functionArgs: [
+          uintCV(gameId),
+          uintCV(guessNum)
+        ],
+        onFinish: (data) => {
+          console.log("Transaction finished:", data);
+          alert(`Guess transaction broadcasted! TxId: ${data.txId}`);
+          setGuess("");
+          setIsLoading(false);
+        },
+        onCancel: () => {
+          console.log("Transaction canceled");
+          setIsLoading(false);
+        },
+      });
     } catch (error) {
-        console.error("Contract call failed", error);
-        setIsLoading(false);
+      console.error("Contract call failed", error);
+      setIsLoading(false);
     }
   };
+
+  if (!isMounted) return null;
 
   return (
     <form onSubmit={handleSubmit} className="mt-4 pt-4 border-t border-white/5">

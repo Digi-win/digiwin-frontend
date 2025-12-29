@@ -1,39 +1,60 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { connect } from "@stacks/connect";
-import { useStacks } from "@/components/Providers";
+import { useState, useEffect } from "react";
+import { useConnect } from "@stacks/connect-react";
+import { userSession } from "@/lib/stacks";
 
 export default function Navbar() {
-  const { isConnected, address, disconnect, updateAddress } = useStacks();
+  const { authenticate } = useConnect();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const [userAddress, setUserAddress] = useState<string>('');
 
-  const handleConnect = async () => {
-    if (isConnected) {
+  useEffect(() => {
+    setIsMounted(true);
+    if (userSession && userSession.isUserSignedIn()) {
+      setIsSignedIn(true);
+      const userData = userSession.loadUserData();
+      const address = userData.profile?.stxAddress?.mainnet || '';
+      setUserAddress(address);
+    }
+  }, []);
+
+  const handleConnect = () => {
+    if (isSignedIn) {
       if (confirm("Disconnect wallet?")) {
-        disconnect();
+        userSession.signUserOut();
+        setIsSignedIn(false);
+        setUserAddress('');
+        window.location.reload();
       }
     } else {
-      try {
-          const response = await connect();
-          console.log("Connect response:", response);
-          
-          // Extract Stacks address from response
-          if (response?.addresses?.stx && response.addresses.stx.length > 0) {
-            const stacksAddress = response.addresses.stx[0].address;
-            updateAddress(stacksAddress);
-          }
-      } catch (e) {
-          console.error("Connect failed or cancelled", e);
-      }
+      authenticate({
+        appDetails: {
+          name: 'DigiWin',
+          icon: typeof window !== 'undefined' ? window.location.origin + '/favicon.ico' : '/favicon.ico',
+        },
+        redirectTo: '/',
+        onFinish: () => {
+          const userData = userSession.loadUserData();
+          setIsSignedIn(true);
+          const address = userData.profile?.stxAddress?.mainnet || '';
+          setUserAddress(address);
+        },
+        userSession,
+      });
     }
   };
 
-  const truncateAddress = (addy: string | null) => {
+  const truncateAddress = (addy: string) => {
     if (!addy) return "";
     return `${addy.slice(0, 6)}...${addy.slice(-4)}`;
   };
+
+  // Prevent hydration mismatch
+  if (!isMounted) return null;
   
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-white/10">
@@ -63,16 +84,16 @@ export default function Navbar() {
               onClick={handleConnect}
               className={`
                 px-6 py-2.5 rounded-xl font-semibold flex items-center space-x-2 transition-all duration-300
-                ${isConnected 
+                ${isSignedIn 
                   ? "bg-white/10 hover:bg-white/20 text-white border border-white/10"
                   : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:scale-105 hover:shadow-lg hover:shadow-indigo-500/30 text-white"
                 }
               `}
             >
-              {isConnected ? (
+              {isSignedIn ? (
                 <>
                   <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
-                  <span>{truncateAddress(address)}</span>
+                  <span>{truncateAddress(userAddress)}</span>
                 </>
               ) : (
                 <>
@@ -116,7 +137,7 @@ export default function Navbar() {
             </Link>
             <Link 
               href="/#create" 
-              className="block px-3 py-2 rounded-md text-base font-medium text-gray-300 hover:bg-white/10"
+              className="block px-3 py-2 rounded-md text-base font-medium text-gray-300 hover:text-white hover:bg-white/10"
               onClick={() => setIsMobileMenuOpen(false)}
             >
               Create Game
@@ -125,7 +146,7 @@ export default function Navbar() {
               onClick={handleConnect}
               className="w-full mt-4 flex items-center justify-center px-4 py-3 rounded-xl font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 text-white"
             >
-              {isConnected ? truncateAddress(address) : "Connect Wallet"}
+              {isSignedIn ? truncateAddress(userAddress) : "Connect Wallet"}
             </button>
           </div>
         </div>
